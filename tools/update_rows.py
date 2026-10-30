@@ -129,14 +129,31 @@ def main():
     else:
         patch = json.load(open(a[0], encoding="utf-8"))
     added = changed = 0
+    report = []
+    NAMES = ["상호", "섭외 상태", "지역", "구", "동", "주소", "전화", "메모", "위도", "경도", "카카오맵", "네이버지도", "인스타 릴스", "우선 섭외"]
     for r in patch:
         assert isinstance(r, list) and len(r) in (14, 15), r
         hit = find(rows, r)
+        where = " ".join(x for x in (r[2], r[4] or r[3]) if x)
+        pin = "지도에 점 표시" if r[8] is not None else "좌표 없음 — 검색으로만 보임"
         if hit is None:
             rows.append(r); added += 1
+            report.append(f"ADDED\t{r[0]}\t{where}\t{r[1]}\t{pin}\t{'릴스 있음' if r[12] else ''}")
         elif rows[hit] != r:
-            rows[hit] = r; changed += 1
+            o = rows[hit]
+            diff = []
+            for k in range(14):
+                if o[k] != r[k]:
+                    if k == 1: diff.append(f"섭외 상태 '{o[1]}' → '{r[1]}'")
+                    elif k in (8, 9): diff.append("위치") if "위치" not in diff else None
+                    else: diff.append(NAMES[k])
+            rows[hit] = r
+            if diff:
+                changed += 1
+                report.append(f"CHANGED\t{r[0]}\t{where}\t{', '.join(diff)}\t{pin}")
     save(h, m, rows, pw)
+    for line in report:
+        print(line)
     print(f"added {added}, changed {changed}, total {len(rows)}")
 
 
