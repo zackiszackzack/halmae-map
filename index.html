@@ -338,7 +338,7 @@ svg.call(zoom).on("dblclick.zoom",null);
 function styleZoom(){
   const k=zoomK;
   mapEl.style.background=k>=22?"var(--land)":"var(--sea)";
-  gLand.selectAll(".prov").attr("fill-opacity",k>=22?0:1).attr("stroke-opacity",k>=22?0:1);
+  gLand.selectAll(".prov").attr("fill-opacity",0).attr("stroke-opacity",k>=22?0:1);
   gLand.select(".muni").attr("stroke-opacity",k>250?0:1);
   gLand.selectAll(".prov").style("stroke-width",.8/k);
   gLand.select(".muni").style("stroke-width",.5/k);
@@ -497,6 +497,9 @@ function focusShop(s,k){
 // Drawn on a <canvas> under the SVG: while a finger is moving the canvas is only slid/scaled as a picture
 // (no redrawing), and it is redrawn sharp once the gesture ends.
 const ROAD_K=22, MINOR_K=60;
+const PRE_K=16, MINOR_PRE_K=42;   // start loading a little before a layer becomes visible
+const ramp=(k,a,b)=>k<=a?0:k>=b?1:((k-a)/(b-a))*((k-a)/(b-a))*(3-2*(k-a)/(b-a));
+let ovTile=null, ovState=null, landP=null;
 const roadState=new Map();   // tile key -> "loading" | "ok"
 const tiles=new Map();       // tile key -> {layer: [{p:Path2D|null, d:string, b:[x0,y0,x1,y1]}]}
 const ORDER=["park","water","river0","river1","r4","r3","r2","r1","r0"];
@@ -518,18 +521,21 @@ function tileEncode(d,kind,S,TR,TS){
       const o=out[id]||(out[id]={d:"",b:[a,e,b,f]});o.d+=dd;if(a<o.b[0])o.b[0]=a;if(e<o.b[1])o.b[1]=e;if(b>o.b[2])o.b[2]=b;if(f>o.b[3])o.b[3]=f;}
     return Object.values(out);}
   const res={};
+  const cell=kind==="O"?TS:TS/4;
   if(kind==="m"){res.r3=enc(decAll(d),false,TS/8);}
   else{const g={};const push=(k,c)=>{(g[k]=g[k]||[]).push(c);};
     d={a:decAll(d.a),w:decAll(d.w),r:decAll(d.r)};
     (d.a||[]).forEach(([k,c])=>push(k===0?"water":"park",c));(d.w||[]).forEach(([k,c])=>push("river"+k,c));(d.r||[]).forEach(([k,c])=>push("r"+k,c));
-    for(const k in g)res[k]=enc(g[k],k==="water"||k==="park",TS/4);}
+    for(const k in g)res[k]=enc(g[k],k==="water"||k==="park",cell);}
   return res;
 }
 let worker=null;const pendingW=new Map();
-function gotTile(key,out){roadState.set(key,"ok");const t={};for(const k in out)t[k]=out[k].map(o=>({d:o.d,b:o.b,p:null}));tiles.set(key,t);scheduleDraw();}
+function gotTile(key,out){const t={};for(const k in out)t[k]=out[k].map(o=>({d:o.d,b:o.b,p:null}));
+  if(key==="O"){ovTile=t;ovState="ok";scheduleDraw();return;}
+  roadState.set(key,"ok");tiles.set(key,t);scheduleDraw();}
 function mainFetch(key,kind,url){fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
   .then(d=>gotTile(key,tileEncode(d,kind,proj.scale(),proj.translate(),ROADIDX.T)))
-  .catch(()=>{roadState.delete(key);});}
+  .catch(()=>{if(key==="O")ovState=null;else roadState.delete(key);});}
 function dropWorker(){worker=null;for(const [k,j] of pendingW)mainFetch(k,j.kind,j.url);pendingW.clear();}
 try{
   const src=tileEncode.toString()+`
@@ -563,30 +569,58 @@ function drawRoads(){
   lastDraw=performance.now();
   const k=zoomK,t=zt;drawnT=t;cvs.style.transform="";
   ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cvs.width,cvs.height);
-  if(!ROADIDX||k<ROAD_K||!tiles.size){return;}
   ctx.setTransform(DPR*k,0,0,DPR*k,DPR*(t.x+MX),DPR*(t.y+MY));
   const x0=(-MX-t.x)/k,y0=(-MY-t.y)/k,x1=(W+MX-t.x)/k,y1=(H+MY-t.y)/k;
+  const C={land:css("--land"),park:css("--park"),water:css("--water"),edge:css("--road-edge"),road:css("--road"),medge:css("--road-major-edge"),major:css("--road-major"),muted:css("--muted")};
+  ctx.lineCap="round";ctx.lineJoin="round";
+  // land (below k 22 the sea is the page background; above it the whole background is land)
+  if(k<ROAD_K&&BASE){if(!landP)landP=BASE.prov.features.map(f=>new Path2D(path(f)));ctx.fillStyle=C.land;for(const lp of landP)ctx.fill(lp);}
+  const inView=o=>{const b=o.b;return !(b[2]<x0||b[0]>x1||b[3]<y0||b[1]>y1);};
+  const eachIn=(tl,layer,fn)=>{const L=tl&&tl[layer];if(!L)return;for(const o of L){if(!inView(o))continue;if(!o.p)o.p=new Path2D(o.d);fn(o.p);}};
+  const each=(layer,fn)=>{for(const tl of tiles.values())eachIn(tl,layer,fn);};
+  // how much of the detail is ready for this view (keeps the overview up while tiles are still arriving)
+  let need=0,have=0;
+  if(ROADIDX&&k>=PRE_K){const T=ROADIDX.T;const p0=proj.invert([x0,y1]),p1=proj.invert([x1,y0]);
+    for(const [ty,tx] of ROADIDX.M){const la=ty*T,lo=tx*T;if(la<=p1[1]&&la+T>=p0[1]&&lo<=p1[0]&&lo+T>=p0[0]){need++;if(roadState.get("M_"+ty+"_"+tx)==="ok")have++;}}}
+  const ready=need?have/need:1;
+  const aD=ramp(k,18,26)*(need?1:0);                 // detail
+  const aO=Math.max(1-ramp(k,22,32),(1-ready)*0.9); // overview
+  // ---- overview
+  if(ovTile&&aO>0.01){
+    const ow=(px)=>px/k;
+    ctx.globalAlpha=aO;
+    ctx.fillStyle=C.park;eachIn(ovTile,"park",p=>ctx.fill(p));
+    ctx.fillStyle=C.water;eachIn(ovTile,"water",p=>ctx.fill(p));
+    const aR=ramp(k,2,5);
+    if(aR>0){ctx.globalAlpha=aO*aR;ctx.strokeStyle=C.water;ctx.lineWidth=ow(Math.min(2.4,0.8+k/12));eachIn(ovTile,"river0",p=>ctx.stroke(p));}
+    const aM=ramp(k,3,7);
+    if(aM>0){ctx.globalAlpha=aO*aM;
+      ctx.strokeStyle=C.major;ctx.lineWidth=ow(k<10?1.2:2);eachIn(ovTile,"r1",p=>ctx.stroke(p));
+      ctx.strokeStyle=C.medge;ctx.lineWidth=ow(k<10?1.8:3);eachIn(ovTile,"r0",p=>ctx.stroke(p));
+      ctx.strokeStyle=C.major;ctx.lineWidth=ow(k<10?1:1.8);eachIn(ovTile,"r0",p=>ctx.stroke(p));}
+    ctx.globalAlpha=1;
+  }
+  if(!ROADIDX||aD<0.01||!tiles.size)return;
+  // ---- detail
   const z=Math.log2(k/ROAD_K);
   const w=(a,b)=>Math.max(a,Math.min(b,a+z*(b-a)/5))/k;
-  const C={park:css("--park"),water:css("--water"),edge:css("--road-edge"),road:css("--road"),medge:css("--road-major-edge"),major:css("--road-major"),muted:css("--muted")};
-  ctx.lineCap="round";ctx.lineJoin="round";
-  const each=(layer,fn)=>{for(const tl of tiles.values()){const L=tl[layer];if(!L)continue;for(const o of L){const b=o.b;if(b[2]<x0||b[0]>x1||b[3]<y0||b[1]>y1)continue;if(!o.p)o.p=new Path2D(o.d);fn(o.p);}}};
-  const fill=(layer,col)=>{ctx.fillStyle=col;each(layer,p=>ctx.fill(p));};
-  const stroke=(layer,col,lw)=>{ctx.strokeStyle=col;ctx.lineWidth=lw;each(layer,p=>ctx.stroke(p));};
-  fill("park",C.park);fill("water",C.water);
-  stroke("river0",C.water,w(3,14));stroke("river1",C.water,w(1,4));
-  ctx.globalAlpha=.6;ctx.setLineDash([6/k,5/k]);ctx.lineCap="butt";stroke("r4",C.muted,w(1,2));ctx.setLineDash([]);ctx.lineCap="round";ctx.globalAlpha=1;
-  if(k>=70){stroke("r3",C.edge,w(1.8,5));stroke("r3",C.road,w(1,3.5));}
-  if(k>=35){stroke("r2",C.edge,w(2.6,6.5));stroke("r2",C.road,w(1.6,5));}
-  stroke("r1",C.medge,w(3.2,8.5));stroke("r1",C.major,w(2,7));
-  stroke("r0",C.medge,w(4,10.5));stroke("r0",C.major,w(2.6,9));
+  const fill=(layer,col,al)=>{ctx.globalAlpha=al;ctx.fillStyle=col;each(layer,p=>ctx.fill(p));};
+  const stroke=(layer,col,lw,al)=>{ctx.globalAlpha=al;ctx.strokeStyle=col;ctx.lineWidth=lw;each(layer,p=>ctx.stroke(p));};
+  fill("park",C.park,aD);fill("water",C.water,aD);
+  stroke("river0",C.water,w(3,14),aD);stroke("river1",C.water,w(1,4),aD*ramp(k,22,34));
+  const a4=aD*ramp(k,30,48)*.6;
+  if(a4>0.01){ctx.setLineDash([6/k,5/k]);ctx.lineCap="butt";stroke("r4",C.muted,w(1,2),a4);ctx.setLineDash([]);ctx.lineCap="round";}
+  const a3=aD*ramp(k,52,76);if(a3>0.01){stroke("r3",C.edge,w(1.8,5),a3);stroke("r3",C.road,w(1,3.5),a3);}
+  const a2=aD*ramp(k,26,40);if(a2>0.01){stroke("r2",C.edge,w(2.6,6.5),a2);stroke("r2",C.road,w(1.6,5),a2);}
+  stroke("r1",C.medge,w(3.2,8.5),aD);stroke("r1",C.major,w(2,7),aD);
+  stroke("r0",C.medge,w(4,10.5),aD);stroke("r0",C.major,w(2.6,9),aD);
+  ctx.globalAlpha=1;
 }
 // during a gesture: move the last drawing as a picture; redraw only if it has drifted too far
 function slideRoads(){
   if(!drawnT)return;
-  if(zoomK<ROAD_K&&drawnT.k<ROAD_K)return;
   const s=zoomK/drawnT.k,tx=zt.x-s*drawnT.x,ty=zt.y-s*drawnT.y;
-  const far=s>1.8||s<.6||Math.abs(tx)>MX*.9||Math.abs(ty)>MY*.9||(zoomK>=ROAD_K)!==(drawnT.k>=ROAD_K);
+  const far=s>1.8||s<.6||Math.abs(tx)>MX*.9||Math.abs(ty)>MY*.9||(zoomK>=ROAD_K)!==(drawnT.k>=ROAD_K)||(zoomK>=PRE_K&&drawnT.k<PRE_K&&s>1.3);
   if(far&&performance.now()-lastDraw>250){drawRoads();return;}
   cvs.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
 }
@@ -600,16 +634,23 @@ function evictTiles(cLon,cLat){
   for(const k of ok.slice(0,ok.length-TILE_CAP)){tiles.delete(k);roadState.delete(k);}
 }
 
+function loadOverview(){
+  if(ovState)return;ovState="loading";
+  const url=new URL("roads/overview.json",location.href).href;
+  if(worker){pendingW.set("O",{kind:"O",url});worker.postMessage({key:"O",kind:"O",url,T:ROADIDX?ROADIDX.T:0.25,s:proj.scale(),t:proj.translate()});}
+  else mainFetch("O","O",url);
+}
 async function loadRoads(){
   drawRoads();
-  if(!ROADIDX||zoomK<ROAD_K)return;
+  loadOverview();
+  if(!ROADIDX||zoomK<PRE_K)return;
   const T=ROADIDX.T;
   const [ax,ay]=zt.invert([-MX,-MY]),[bx,by]=zt.invert([W+MX,H+MY]);
   const p0=proj.invert([ax,by]),p1=proj.invert([bx,ay]); // [lon,lat] SW, NE (screen + margin)
   const hit=([ty,tx])=>{const la0=ty*T,lo0=tx*T;return la0<=p1[1]&&la0+T>=p0[1]&&lo0<=p1[0]&&lo0+T>=p0[0];};
   const jobs=ROADIDX.M.filter(hit).map(t=>["M",t]);
   evictTiles((p0[0]+p1[0])/2,(p0[1]+p1[1])/2);
-  if(zoomK>=MINOR_K)ROADIDX.m.filter(hit).forEach(t=>jobs.push(["m",t]));
+  if(zoomK>=MINOR_PRE_K)ROADIDX.m.filter(hit).forEach(t=>jobs.push(["m",t]));
   for(const [kind,[ty,tx]] of jobs){
     const key=kind+"_"+ty+"_"+tx; if(roadState.has(key))continue;
     roadState.set(key,"loading");
@@ -781,7 +822,7 @@ try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>dra
 document.getElementById("theme").onclick=()=>{theme=THEMES[(THEMES.indexOf(theme)+1)%3];try{localStorage.setItem("hm-theme2",theme)}catch(e){};applyTheme();};
 applyTheme();
 window.addEventListener("resize",()=>{size();sizeCanvas();drawRoads();layoutLabels();});
-render();layoutLabels();updateWhere();
+render();layoutLabels();updateWhere();styleZoom();drawRoads();setTimeout(loadOverview,200);
 if(state.region)fitTo(visibleShops().filter(s=>s.x!=null));
 </script>
 <script>
