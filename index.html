@@ -132,6 +132,7 @@ aside{width:340px;flex:none;border-left:1px solid var(--line);background:var(--p
 .drawer-toggle{display:none}
 .attrib{position:absolute;right:max(8px,env(safe-area-inset-right,0px));bottom:4px;font-size:10px;color:var(--muted);background:color-mix(in srgb,var(--panel) 75%,transparent);padding:1px 6px;border-radius:4px;pointer-events:none}
 #map.moving .nm{opacity:0}
+.moving .hit{display:none}
 .card[hidden],.sugg[hidden]{display:none}
 .lbl{font-family:var(--ui);fill:var(--muted);paint-order:stroke;stroke:var(--halo);stroke-width:0;pointer-events:none;text-anchor:middle;dominant-baseline:middle;letter-spacing:.02em}
 .lbl.sido{font-weight:600;opacity:.9}
@@ -286,6 +287,7 @@ function visibleShops(){
 // map
 const mapEl=document.getElementById("map");
 const svg=d3.select(mapEl).insert("svg",":first-child");
+const svgEl=svg.node();const zsel=d3.select(mapEl);svgEl.style.transformOrigin="0 0";let svgBase=null;
 svg.append("defs").html('<pattern id="recStar" patternContentUnits="objectBoundingBox" width="1" height="1"><rect width="1" height="1" fill="var(--s-todo)"/><path transform="translate(.5,.52) scale(.33)" fill="#ffd43b" stroke="#c98a00" stroke-width=".06" d="M0,-1L0.2245,-0.309L0.951,-0.309L0.3633,0.118L0.5878,0.809L0,0.382L-0.5878,0.809L-0.3633,0.118L-0.951,-0.309L-0.2245,-0.309Z"/></pattern>');
 const gRoot=svg.append("g"), gLand=gRoot.append("g");
 // pins and names live in their own layer whose units are re-based (×OB) after each zoom, so the shapes never get
@@ -306,6 +308,7 @@ size();
 const korea={type:"FeatureCollection",features:BASE?BASE.prov.features:[]};
 proj.fitExtent([[20,20],[W-20,H-20]],korea.features.length?korea:{type:"MultiPoint",coordinates:shops.filter(s=>s.lat).map(s=>[s.lng,s.lat])});
 if(BASE){
+  gLand.style("display","none");
   gLand.selectAll("path.prov").data(BASE.prov.features).join("path").attr("class","prov").attr("d",path);
   gLand.append("path").datum(BASE.muni).attr("class","muni").attr("d",path);
 }
@@ -337,22 +340,35 @@ function updateWhere(){
 
 const ZMAX=6000;
 const PR=k=>Math.min(3.9*Math.pow(k,.08),5.4);
-const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).on("start",()=>{mapEl.classList.add("moving");})
-  .on("zoom",ev=>{zt=ev.transform;zoomK=zt.k;gRoot.attr("transform",zt);overTransform();slideRoads();if(!rafPending){rafPending=true;requestAnimationFrame(()=>{rafPending=false;styleZoom();});}})
-  .on("end",()=>{mapEl.classList.remove("moving");
+const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).on("start",()=>{mapEl.classList.add("moving");svgBase={x:zt.x,y:zt.y,k:zt.k};})
+  .on("zoom",ev=>{zt=ev.transform;zoomK=zt.k;slideRoads();
+    // during a gesture the dot layer is moved as one picture (GPU only); it is really redrawn when it has drifted far or the gesture ends
+    if(svgBase&&mapEl.classList.contains("moving")){
+      const s=zt.k/svgBase.k,tx=zt.x-s*svgBase.x,ty=zt.y-s*svgBase.y;
+      if(s<1.6&&s>0.62&&Math.abs(tx)<W*0.35&&Math.abs(ty)<H*0.35){svgEl.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;return;}
+      svgBase={x:zt.x,y:zt.y,k:zt.k};
+    }
+    svgEl.style.transform="";gRoot.attr("transform",zt);overTransform();
+    if(!rafPending){rafPending=true;requestAnimationFrame(()=>{rafPending=false;styleZoom();});}})
+  .on("end",()=>{mapEl.classList.remove("moving");svgBase=null;svgEl.style.transform="";gRoot.attr("transform",zt);overTransform();
     // redraw the base canvas first and again on the next frames, so a failure elsewhere can never leave it shifted
     try{loadRoads();}catch(e){}
-    for(const f of [rebase,renderList,layoutAll,updateWhere]){try{f();}catch(e){}}
+    try{rebase();}catch(e){}
+    // re-render the dot layer when zoomed in and the view has moved/zoomed noticeably (dots near the screen only)
+    const [vx0,vy0]=zt.invert([0,0]),[vx1,vy1]=zt.invert([W,H]),R=renderedBox;
+    const stale=zoomK>=6?(!R||vx0<R[0]||vy0<R[1]||vx1>R[2]||vy1>R[3]):renderedK>=6;
+    if(stale){try{render();}catch(e){}}
+    else{try{styleZoom();}catch(e){}for(const f of [renderList,layoutAll]){try{f();}catch(e){}}}
+    try{updateWhere();}catch(e){}
     requestAnimationFrame(()=>{if(!mapEl.classList.contains("moving"))drawRoads();});
     setTimeout(()=>{if(!mapEl.classList.contains("moving"))drawRoads();},350);});
-svg.call(zoom).on("dblclick.zoom",null);
+// the zoom listener sits on the map box (not the SVG) because the SVG itself is moved with a CSS transform during gestures;
+// only gestures that start on the map picture count (buttons, the shop card and panels keep their own taps/scrolling)
+zoom.filter(ev=>(!ev.ctrlKey||ev.type==="wheel")&&!ev.button&&(ev.target===mapEl||svgEl.contains(ev.target)||ev.target===cvs||ev.target===cWrap));
+zsel.call(zoom).on("dblclick.zoom",null);
 function styleZoom(){
-  const k=zoomK;
+  const k=zoomK;styledK=k;
   mapEl.style.background="var(--sea)";
-  gLand.selectAll(".prov").attr("fill-opacity",0).attr("stroke-opacity",k>=22?0:1);
-  gLand.select(".muni").attr("stroke-opacity",k>250?0:1);
-  gLand.selectAll(".prov").style("stroke-width",.8/k);
-  gLand.select(".muni").style("stroke-width",.5/k);
   const B=OB;
   const pr=PR(k);
   gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1/k*B);
@@ -408,8 +424,8 @@ function layoutAll(){
   styleZoom();
 }
 function layoutNames(){layoutAll();}
-document.getElementById("zin").onclick=()=>svg.transition().duration(250).call(zoom.scaleBy,1.8);
-document.getElementById("zout").onclick=()=>svg.transition().duration(250).call(zoom.scaleBy,1/1.8);
+document.getElementById("zin").onclick=()=>zsel.transition().duration(250).call(zoom.scaleBy,1.8);
+document.getElementById("zout").onclick=()=>zsel.transition().duration(250).call(zoom.scaleBy,1/1.8);
 
 // ---- 내 위치 (browser geolocation; the page may not be allowed to use it inside some viewers)
 function drawMe(){
@@ -438,7 +454,7 @@ function setMe(pos){
   if(typeof renderList==="function"&&!state.sel)renderList();
   if(firstFix){firstFix=false;focusMe();mapToast(acc>200?`내 위치 (오차 약 ${Math.round(acc)}m)`:"내 위치");}
 }
-function focusMe(){if(!me)return;const kk=Math.max(zoomK,180);svg.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(kk).translate(-me.x,-me.y));}
+function focusMe(){if(!me)return;const kk=Math.max(zoomK,180);zsel.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(kk).translate(-me.x,-me.y));}
 // fallback: the viewer pastes coordinates or a map link copied from another map app
 const locPanel=document.getElementById("locpanel"),locIn=document.getElementById("locin"),locMsg=document.getElementById("locmsg");
 let geoBlocked=false;
@@ -495,17 +511,17 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 document.getElementById("zall").onclick=()=>fitTo(visibleShops().filter(s=>s.x!=null));
 
 function fitTo(list,maxK=60){
-  if(!list.length){svg.transition().duration(400).call(zoom.transform,d3.zoomIdentity);return;}
+  if(!list.length){zsel.transition().duration(400).call(zoom.transform,d3.zoomIdentity);return;}
   const xs=list.map(s=>s.x),ys=list.map(s=>s.y);
   const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
   const k=Math.min(maxK,0.85/Math.max((x1-x0+1e-6)/W,(y1-y0+1e-6)/H));
   const t=d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-(x0+x1)/2,-(y0+y1)/2);
-  svg.transition().duration(500).call(zoom.transform,t);
+  zsel.transition().duration(500).call(zoom.transform,t);
 }
 function focusShop(s,k){
   if(s.x==null)return;
   const kk=k||Math.max(zoomK,120);
-  svg.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2.4).scale(kk).translate(-s.x,-s.y));
+  zsel.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2.4).scale(kk).translate(-s.x,-s.y));
 }
 
 // ---- streets, rivers, parks (OpenStreetMap extract, loaded per 0.25° tile when zoomed in)
@@ -514,7 +530,7 @@ function focusShop(s,k){
 const ROAD_K=22, MINOR_K=60;
 const PRE_K=16, MINOR_PRE_K=42;   // start loading a little before a layer becomes visible
 const ramp=(k,a,b)=>k<=a?0:k>=b?1:((k-a)/(b-a))*((k-a)/(b-a))*(3-2*(k-a)/(b-a));
-let ovTile=null, ovState=null, landP=null, LANDIDX=null;
+let ovTile=null, ovState=null, landP=null, muniP=null, LANDIDX=null, landLo=null, landLoState=null;
 fetch(new URL("roads/land_index.json",location.href).href).then(r=>r.ok?r.json():null).then(d=>{if(d){LANDIDX=d;scheduleDraw();}}).catch(()=>{});
 const STA_K=42, STA_NAME_K=58, EXIT_K=260;
 let STA=null, staState=null;
@@ -540,7 +556,7 @@ function tileEncode(d,kind,S,TR,TS){
     return Object.values(out);}
   const res={};
   const cell=kind==="O"?TS:TS/4;
-  if(kind==="L"){res.land=enc(decAll(d.p),true,TS);return res;}
+  if(kind==="L"||kind==="LL"){res.land=enc(decAll(d.p),true,kind==="LL"?1000:TS);return res;}
   if(kind==="m"){res.r3=enc(decAll(d),false,TS/8);}
   else{const g={};const push=(k,c)=>{(g[k]=g[k]||[]).push(c);};
     d={a:decAll(d.a),w:decAll(d.w),r:decAll(d.r)};
@@ -551,6 +567,7 @@ function tileEncode(d,kind,S,TR,TS){
 let worker=null;const pendingW=new Map();
 function gotTile(key,out){const t={};for(const k in out)t[k]=out[k].map(o=>({d:o.d,b:o.b,p:null}));
   if(key==="O"){ovTile=t;ovState="ok";scheduleDraw();return;}
+  if(key==="LL"){landLo=t.land;scheduleDraw();return;}
   roadState.set(key,"ok");tiles.set(key,t);scheduleDraw();}
 function mainFetch(key,kind,url){fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
   .then(d=>gotTile(key,tileEncode(d,kind,proj.scale(),proj.translate(),ROADIDX.T)))
@@ -606,8 +623,17 @@ function drawRoads(){
     ctx.fillStyle=C.land;
     ctx.save();
     if(done.length){ctx.beginPath();ctx.rect(x0,y0,x1-x0,y1-y0);for(const d of done)ctx.rect(...d.r);ctx.clip("evenodd");}
-    for(const lp of landP)ctx.fill(lp);
+    const lo=landLo&&landLo.map(o=>o.p||(o.p=new Path2D(o.d)));
+    if(lo)for(const lp of lo)ctx.fill(lp,"evenodd");else for(const lp of landP)ctx.fill(lp);
     ctx.restore();
+    // borders (were SVG paths; on the canvas they slide with the picture during gestures)
+    // (the province/municipal lines are coarse, so they are clipped to the detailed land and the coast is drawn from the detailed outline)
+    const lo2=landLo&&landLo.map(o=>o.p||(o.p=new Path2D(o.d)));
+    ctx.save();if(lo2){ctx.beginPath();for(const lp of lo2)ctx.clip(lp,"evenodd");}
+    if(k<ROAD_K){ctx.strokeStyle=css("--land-edge");ctx.lineWidth=.8/k;for(const lp of landP)ctx.stroke(lp);}
+    if(k<=250){if(!muniP)muniP=new Path2D(path(BASE.muni));ctx.strokeStyle=css("--muni-edge");ctx.lineWidth=.5/k;ctx.globalAlpha=k<ROAD_K?1:.7;ctx.stroke(muniP);ctx.globalAlpha=1;}
+    ctx.restore();
+    if(lo2&&k<ROAD_K){ctx.strokeStyle=css("--land-edge");ctx.lineWidth=.6/k;for(const lp of lo2)ctx.stroke(lp);}
     for(const d of done){
       if(d.v===1){ctx.fillRect(d.r[0]-0.02/k,d.r[1]-0.02/k,d.r[2]+0.04/k,d.r[3]+0.04/k);}
       else if(d.v===2&&d.tl.land){for(const o of d.tl.land){if(!o.p)o.p=new Path2D(o.d);ctx.fill(o.p,"evenodd");}}
@@ -734,6 +760,8 @@ function evictTiles(cLon,cLat){
 }
 
 function loadOverview(){
+  if(!landLoState){landLoState="loading";const u=new URL("roads/land_lo.json",location.href).href;
+    if(worker){pendingW.set("LL",{kind:"LL",url:u});worker.postMessage({key:"LL",kind:"LL",url:u,T:ROADIDX?ROADIDX.T:0.25,s:proj.scale(),t:proj.translate()});}else mainFetch("LL","LL",u);}
   if(ovState)return;ovState="loading";
   const url=new URL("roads/overview.json",location.href).href;
   if(worker){pendingW.set("O",{kind:"O",url});worker.postMessage({key:"O",kind:"O",url,T:ROADIDX?ROADIDX.T:0.25,s:proj.scale(),t:proj.translate()});}
@@ -760,14 +788,16 @@ async function loadRoads(){
     else mainFetch(key,kind,url);
   }
 }
-let downAt=null, pressed=null, suppressBg=false, rafPending=false;
+let downAt=null, pressed=null, suppressBg=false, rafPending=false, renderedK=1, renderedBox=null, styledK=1;
 function press(d){pressed=d;styleZoom();setTimeout(()=>{if(pressed===d){pressed=null;styleZoom();}},180);}
 function drawHalo(){
   const d=state.sel&&state.sel.x!=null?[state.sel]:[];
   gSel.selectAll("circle").data(d,x=>x.i).join("circle").attr("class","halo pulse").attr("cx",x=>x.x*OB).attr("cy",x=>x.y*OB);
 }
 function render(){
-  const vis=visibleShops().filter(s=>s.x!=null);
+  let vis=visibleShops().filter(s=>s.x!=null);
+  renderedK=zoomK;renderedBox=null;
+  if(zoomK>=6){const [ax,ay]=zt.invert([-W,-H]),[bx,by]=zt.invert([2*W,2*H]);renderedBox=[ax,ay,bx,by];vis=vis.filter(s=>s===state.sel||(s.x>=ax&&s.x<=bx&&s.y>=ay&&s.y<=by));}
   const sel=gPins.selectAll("circle").data(vis,d=>d.i);
   sel.join(
     en=>en.append("circle").attr("class","pin").on("click",(ev,d)=>{ev.stopPropagation();select(d);}),
@@ -854,7 +884,7 @@ function nudgeZoom(s){
   if(s.x==null)return;
   const k2=Math.min(zoomK*1.4,ZMAX),mr=mapEl.getBoundingClientRect(),cr=card.getBoundingClientRect();
   const ct=card.hidden?H:cr.top-mr.top, ty=ct<H-40?Math.max(48,ct*0.5):H/2;
-  svg.transition().duration(350).call(zoom.transform,d3.zoomIdentity.translate(W/2,ty).scale(k2).translate(-s.x,-s.y));
+  zsel.transition().duration(350).call(zoom.transform,d3.zoomIdentity.translate(W/2,ty).scale(k2).translate(-s.x,-s.y));
 }
 function select(s,fromMap){
   state.sel=s;
