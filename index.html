@@ -804,12 +804,10 @@ function refLinks(memo){
   return out;
 }
 function linkify(t){
-  const refs=refLinks(t);
-  return esc(t).replace(/https?:\/\/[^\s"<>)]+/g,u=>{
-    if(/instagram\.com/.test(u))return `<a href="${u}" target="_blank" rel="noopener">다른 릴스</a>`;
-    const r=refs.find(x=>esc(x.u)===u);
-    return `<a class="ref" href="${u}" target="_blank" rel="noopener">[${r?r.tag:"링크"}]</a>`;
-  });
+  // evidence links are shown as buttons under the memo, so their URLs are hidden from the memo text
+  let s=String(t||"").replace(/(?:출처\s*:\s*)?https?:\/\/[^\s"<>)]+/g,u=>/instagram\.com/.test(u)?u:"");
+  s=s.replace(/\(\s*\)/g,"").replace(/\s+\/\s+(?=\/\s)/g," ").replace(/\s+\/\s*$/,"").replace(/\s*·\s*(?=·|$)/g,"").replace(/[ \t]{2,}/g," ").trim();
+  return esc(s).replace(/https?:\/\/[^\s"<>)]*instagram\.com[^\s"<>)]*/g,u=>`<a href="${u}" target="_blank" rel="noopener">다른 릴스</a>`);
 }
 function tapAt(d,ev){
   const mr=mapEl.getBoundingClientRect(),tx=ev.clientX-mr.left,ty=ev.clientY-mr.top,k=zoomK,rr=PR(k)+7;
