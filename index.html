@@ -78,7 +78,8 @@ main{flex:1;min-height:0;display:flex;position:relative}
 .muni{fill:none;stroke:var(--muni-edge);stroke-width:.5}
 .pin{stroke:#fff;pointer-events:none}
 .hit{fill:transparent;cursor:pointer;pointer-events:all}
-.nm{font-family:var(--ui);font-weight:700;fill:var(--ink);paint-order:stroke;stroke:var(--halo);stroke-linejoin:round;pointer-events:none;dominant-baseline:middle}
+.nm{font-family:var(--ui);font-weight:700;fill:var(--ink);paint-order:stroke;stroke:var(--halo);stroke-linejoin:round;pointer-events:auto;cursor:pointer;dominant-baseline:middle}
+.star{fill:#ffd43b;stroke:#b07800;stroke-width:.12;pointer-events:none}
 .nm.sel{fill:var(--accent-ink)}
 .pin.sel{stroke:#fff}
 .halo{fill:none;stroke:var(--accent);pointer-events:none}
@@ -129,7 +130,7 @@ aside{width:340px;flex:none;border-left:1px solid var(--line);background:var(--p
 .copy{font:inherit;font-size:12px;padding:1px 7px;margin-left:6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
 .drawer-toggle{display:none}
 .attrib{position:absolute;right:max(8px,env(safe-area-inset-right,0px));bottom:4px;font-size:10px;color:var(--muted);background:color-mix(in srgb,var(--panel) 75%,transparent);padding:1px 6px;border-radius:4px;pointer-events:none}
-#map.moving .nm{display:none}
+#map.moving .nm{opacity:0}
 .card[hidden],.sugg[hidden]{display:none}
 .lbl{font-family:var(--ui);fill:var(--muted);paint-order:stroke;stroke:var(--halo);stroke-width:0;pointer-events:none;text-anchor:middle;dominant-baseline:middle;letter-spacing:.02em}
 .lbl.sido{font-weight:600;opacity:.9}
@@ -229,7 +230,7 @@ const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(
 
 const shops = ROWS.map((r,i)=>({i,name:r[0],status:r[1],sido:r[2]||"",gu:r[3]||"",dong:r[4]||"",addr:r[5]||"",phone:r[6]||"",memo:r[7]||"",lat:r[8],lng:r[9],kakao:r[10]||"",naver:r[11]||"",reel:r[12]||"",prio:!!r[13]}));
 shops.forEach(s=>{
-  s.g=groupOf(s.status);s.hay=(s.name+" "+s.sido+" "+s.gu+" "+s.dong+" "+s.addr+" "+s.memo).toLowerCase();
+  s.g=groupOf(s.status);s.rec=s.status==="섭외 전"&&/\[섭외추천\]/.test(s.memo);s.hay=(s.name+" "+s.sido+" "+s.gu+" "+s.dong+" "+s.addr+" "+s.memo).toLowerCase();
   const t=s.dong.split(/\s+/).filter(Boolean);
   const one=t.length===1&&/(동|가|읍|면|리)$/.test(t[0])&&!/구$|시$|군$/.test(t[0]);
   s.dongName=t.length>1?t[t.length-1]:(one?t[0]:"");
@@ -287,13 +288,13 @@ const svg=d3.select(mapEl).insert("svg",":first-child");
 const gRoot=svg.append("g"), gLand=gRoot.append("g");
 // pins and names live in their own layer whose units are re-based (×OB) after each zoom, so the shapes never get
 // microscopically small at street level (iPhone Safari drew tiny circles as white blobs)
-const gOver=svg.append("g"), gLbl=gOver.append("g"), gSel=gOver.append("g"), gPins=gOver.append("g"), gMe=gOver.append("g").attr("pointer-events","none"), gNames=gOver.append("g"), gHit=gOver.append("g");
+const gOver=svg.append("g"), gLbl=gOver.append("g"), gSel=gOver.append("g"), gPins=gOver.append("g"), gStar=gOver.append("g").attr("pointer-events","none"), gMe=gOver.append("g").attr("pointer-events","none"), gNames=gOver.append("g"), gHit=gOver.append("g");
 let me=null;
 let OB=1;
 function overTransform(){gOver.attr("transform",`translate(${zt.x},${zt.y}) scale(${zt.k/OB})`);}
 function rebase(){const nb=Math.pow(2,Math.round(Math.log2(Math.max(1,zoomK))));if(nb===OB)return false;OB=nb;
   gPins.selectAll("circle").attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB);gHit.selectAll("circle").attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB);
-  gSel.selectAll("circle").attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB);drawMe();overTransform();return true;}
+  gSel.selectAll("circle").attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB);styleZoom();drawMe();overTransform();return true;}
 let W=0,H=0;
 const proj=d3.geoMercator();
 const path=d3.geoPath(proj);
@@ -348,6 +349,7 @@ function styleZoom(){
   const B=OB;
   const pr=PR(k);
   gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1.2/k*B);
+  gStar.selectAll("path").attr("transform",d=>`translate(${d.x*B},${d.y*B}) scale(${(d===pressed?pr+1.5:pr)*0.72/k*B})`);
   gSel.selectAll("circle").attr("r",(pr+5)/k*B).style("stroke-width",2.5/k*B);
   gHit.selectAll("circle").attr("r",Math.max(pr+4,11)/k*B);
   styleMe();
@@ -380,7 +382,11 @@ function layoutAll(){
       if(ok){s._a=ok[2];s._dx=ok[3];s._dy=ok[4];show.push(s);}
     }
   }
-  gNames.selectAll("text").data(show,d=>d.i).join("text").attr("class",d=>"nm"+(d===state.sel?" sel":"")).text(d=>d.name);
+  gNames.selectAll("text").data(show,d=>d.i).join(en=>en.append("text")
+      .on("pointerdown",(ev,d)=>{downAt={x:ev.clientX,y:ev.clientY,d};})
+      .on("pointerup",(ev,d)=>{if(downAt&&downAt.d===d&&Math.hypot(ev.clientX-downAt.x,ev.clientY-downAt.y)<14){ev.stopPropagation();suppressBg=true;setTimeout(()=>suppressBg=false,400);select(d,true);}downAt=null;})
+      .on("click",ev=>ev.stopPropagation()))
+    .attr("class",d=>"nm"+(d===state.sel?" sel":"")).text(d=>d.name);
   // area names
   const on=new Set();
   const cand=LBL.filter(d=>k>=LV[d.type][0]&&k<LV[d.type][1]&&d.x>=ax&&d.x<=bx&&d.y>=ay&&d.y<=by).sort((a,b)=>b.n-a.n);
@@ -655,15 +661,17 @@ function drawStations(k,t){
   }
   // 2) exits (street level), under the station labels and not on top of each other
   if(k>=EXIT_K){
-    ctx.font="700 10px 'Noto Sans KR',system-ui,sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+    ctx.font="600 9.5px 'Noto Sans KR',system-ui,sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
     const eBoxes=[];
     for(const s of vis)for(const e of s.ex){
       const px=e.x*k+t.x,py=e.y*k+t.y;if(px<X0||px>X1||py<Y0||py>Y1)continue;
       const w=Math.max(15,ctx.measureText(e.n).width+7),hh=15,box=[px-w/2-1,py-hh/2-1,px+w/2+1,py+hh/2+1];
       if(hit(box,eBoxes)||hit(box,sBoxes))continue;eBoxes.push(box);
-      ctx.fillStyle="#fff";rrect(px-w/2-1.5,py-hh/2-1.5,w+3,hh+3,4.5);ctx.fill();
-      ctx.fillStyle=e.c;rrect(px-w/2,py-hh/2,w,hh,3.5);ctx.fill();
-      ctx.fillStyle="#fff";ctx.fillText(e.n,px,py+0.5);
+      ctx.globalAlpha=0.62;
+      ctx.fillStyle="#fff";rrect(px-w/2,py-hh/2,w,hh,3.5);ctx.fill();
+      ctx.lineWidth=1;ctx.strokeStyle=e.c;rrect(px-w/2+0.5,py-hh/2+0.5,w-1,hh-1,3);ctx.stroke();
+      ctx.fillStyle=e.c;ctx.fillText(e.n,px,py+0.5);
+      ctx.globalAlpha=1;
     }
   }
   // 3) draw the station labels
@@ -739,6 +747,7 @@ function render(){
    .attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB).attr("fill",d=>`var(${d.g.c})`)
    .classed("sel",d=>d===state.sel);
   gPins.selectAll("circle").sort((a,b)=>(a===state.sel)-(b===state.sel)||GROUPS.indexOf(b.g)-GROUPS.indexOf(a.g));
+  gStar.selectAll("path").data(vis.filter(d=>d.rec),d=>d.i).join(en=>en.append("path").attr("class","star").attr("d","M0,-1L0.2245,-0.309L0.951,-0.309L0.3633,0.118L0.5878,0.809L0,0.382L-0.5878,0.809L-0.3633,0.118L-0.951,-0.309L-0.2245,-0.309Z"));
   gHit.selectAll("circle").data(vis,d=>d.i).join(en=>en.append("circle").attr("class","hit")
       .on("pointerdown",(ev,d)=>{downAt={x:ev.clientX,y:ev.clientY,d};press(d);})
       .on("pointerup",(ev,d)=>{if(downAt&&downAt.d===d&&Math.hypot(ev.clientX-downAt.x,ev.clientY-downAt.y)<14){ev.stopPropagation();suppressBg=true;setTimeout(()=>suppressBg=false,400);tapAt(d,ev);}downAt=null;})
