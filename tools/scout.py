@@ -6,7 +6,7 @@
 
 search: 지역 × 근거 문구로 검색 → 요약에 근거가 있는 글만 → 블로그 본문을 열어 지도 위젯(상호·주소·좌표)과
         근거 문장·반대 신호·스토리 신호를 뽑는다 → 장부(rows.json = update_rows.py --dump 결과)에 있는 가게는 뺀다.
-enrich: Claude가 고른 후보 [{name,address,lat,lng,memo,...}]에 카카오 위치·전화·법정동을 붙여 노션 속성 형태로 만든다.
+enrich: Claude가 고른 후보 [{name,address,lat?,lng?,memo,status?}] (좌표가 없으면 주소로 찾음, status 기본 '섭외 전')에 카카오 위치·전화·법정동을 붙여 노션 속성 형태로 만든다.
 키는 환경변수로만 받는다(저장소에 쓰지 않음).
 """
 import sys, os, re, json, time, html, math, argparse, urllib.request, urllib.parse
@@ -161,6 +161,12 @@ def cmd_enrich(a):
     for c in chosen:
         lat, lng, name = c.get("lat"), c.get("lng"), c["name"]
         place = None
+        if not lat and c.get("address"):
+            try:
+                d = kakao("search/address.json", query=c["address"])["documents"][0]
+                lat, lng = float(d["y"]), float(d["x"])
+            except Exception:
+                pass
         try:
             ds = kakao("search/keyword.json", query=name, y=lat, x=lng, radius=300, sort="distance")["documents"] if lat else []
             for d in ds:
@@ -179,7 +185,7 @@ def cmd_enrich(a):
         addr = (place and (place.get("road_address_name") or place.get("address_name"))) or c.get("address") or ""
         r1 = SHORT.get(reg["region_1depth_name"], "") if reg else ""
         r2 = reg["region_2depth_name"] if reg else ""
-        p = {"상호": name, "섭외 상태": "섭외 전", "주소": addr, "메모": c["memo"]}
+        p = {"상호": name, "섭외 상태": c.get("status") or "섭외 전", "주소": addr, "메모": c["memo"]}
         if r1:
             p["지역"] = r1
         if r1 in ("서울", "경기", "인천") and r2 and f"{r1} {r2.split()[0]}" in GU_OK:
