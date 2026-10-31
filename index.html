@@ -73,6 +73,7 @@ main{flex:1;min-height:0;display:flex;position:relative}
 #map svg{width:100%;height:100%;display:block}
 #map svg{position:relative}
 .roadwrap{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.dotcvs{position:absolute;left:0;top:0;pointer-events:none}
 .roadwrap canvas{position:absolute}
 .moving .roadwrap canvas{will-change:transform}
 .prov{fill:var(--land);stroke:var(--land-edge);stroke-width:.8}
@@ -287,7 +288,7 @@ function visibleShops(){
 // map
 const mapEl=document.getElementById("map");
 const svg=d3.select(mapEl).insert("svg",":first-child");
-const svgEl=svg.node();const zsel=d3.select(mapEl);svgEl.style.transformOrigin="0 0";let svgBase=null;
+const svgEl=svg.node();const zsel=d3.select(mapEl);
 svg.append("defs").html('<pattern id="recStar" patternContentUnits="objectBoundingBox" width="1" height="1"><rect width="1" height="1" fill="var(--s-todo)"/><path transform="translate(.5,.52) scale(.33)" fill="#ffd43b" stroke="#c98a00" stroke-width=".06" d="M0,-1L0.2245,-0.309L0.951,-0.309L0.3633,0.118L0.5878,0.809L0,0.382L-0.5878,0.809L-0.3633,0.118L-0.951,-0.309L-0.2245,-0.309Z"/></pattern>');
 const gRoot=svg.append("g"), gLand=gRoot.append("g");
 // pins and names live in their own layer whose units are re-based (×OB) after each zoom, so the shapes never get
@@ -340,17 +341,13 @@ function updateWhere(){
 
 const ZMAX=6000;
 const PR=k=>Math.min(3.9*Math.pow(k,.08),5.4);
-const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).on("start",()=>{mapEl.classList.add("moving");svgBase={x:zt.x,y:zt.y,k:zt.k};})
+const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).on("start",()=>{mapEl.classList.add("moving");dotsStart();})
   .on("zoom",ev=>{zt=ev.transform;zoomK=zt.k;slideRoads();
-    // during a gesture the dot layer is moved as one picture (GPU only); it is really redrawn when it has drifted far or the gesture ends
-    if(svgBase&&mapEl.classList.contains("moving")){
-      const s=zt.k/svgBase.k,tx=zt.x-s*svgBase.x,ty=zt.y-s*svgBase.y;
-      if(s<1.6&&s>0.62&&Math.abs(tx)<W*0.35&&Math.abs(ty)<H*0.35){svgEl.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;return;}
-      svgBase={x:zt.x,y:zt.y,k:zt.k};
-    }
-    svgEl.style.transform="";gRoot.attr("transform",zt);overTransform();
+    // during a gesture the dots are drawn on a canvas at a fixed size (cheap); the SVG layer comes back when the gesture ends
+    if(dotsOn){if(!dotsRaf)dotsRaf=requestAnimationFrame(()=>{dotsRaf=0;drawDots();});return;}
+    gRoot.attr("transform",zt);overTransform();
     if(!rafPending){rafPending=true;requestAnimationFrame(()=>{rafPending=false;styleZoom();});}})
-  .on("end",()=>{mapEl.classList.remove("moving");svgBase=null;svgEl.style.transform="";gRoot.attr("transform",zt);overTransform();
+  .on("end",()=>{mapEl.classList.remove("moving");gRoot.attr("transform",zt);overTransform();dotsEnd();
     // redraw the base canvas first and again on the next frames, so a failure elsewhere can never leave it shifted
     try{loadRoads();}catch(e){}
     try{rebase();}catch(e){}
@@ -371,7 +368,7 @@ function styleZoom(){
   mapEl.style.background="var(--sea)";
   const B=OB;
   const pr=PR(k);
-  gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1/k*B);
+  gPins.selectAll("circle").attr("r",d=>((d===pressed?pr+1.5:pr)+(d.rec?1:0))/k*B).attr("stroke-width",1/k*B);
   gSel.selectAll("circle").attr("r",(pr+5)/k*B).style("stroke-width",2.5/k*B);
   gHit.selectAll("circle").attr("r",Math.max(pr+4,11)/k*B);
   styleMe();
@@ -589,6 +586,32 @@ const cWrap=document.createElement("div");cWrap.className="roadwrap";mapEl.inser
 const cvs=document.createElement("canvas");cWrap.appendChild(cvs);
 const ctx=cvs.getContext("2d");
 let MX=0,MY=0,DPR=1,drawnT=null,drawPending=false,lastDraw=0;
+const dotCvs=document.createElement("canvas");dotCvs.className="dotcvs";mapEl.insertBefore(dotCvs,svg.node().nextSibling);
+const dctx=dotCvs.getContext("2d");
+let dotsOn=false,dotsRaf=0,dotList=[],dotCol={};
+const STAR_PTS=[[0,-1],[.2245,-.309],[.951,-.309],[.3633,.118],[.5878,.809],[0,.382],[-.5878,.809],[-.3633,.118],[-.951,-.309],[-.2245,-.309]];
+function dotsStart(){
+  dotList=visibleShops().filter(s=>s.x!=null).sort((a,b)=>GROUPS.indexOf(b.g)-GROUPS.indexOf(a.g));dotCol={};
+  for(const s of dotList)if(!(s.g.c in dotCol))dotCol[s.g.c]=css(s.g.c);
+  const d=Math.min(window.devicePixelRatio||1,2);dotCvs.width=Math.round(W*d);dotCvs.height=Math.round(H*d);dotCvs.style.width=W+"px";dotCvs.style.height=H+"px";dotCvs._d=d;
+  dotsOn=true;drawDots();svgEl.style.visibility="hidden";
+}
+function drawDots(){
+  const d=dotCvs._d||1,k=zoomK,t=zt,r=PR(k);
+  dctx.setTransform(d,0,0,d,0,0);dctx.clearRect(0,0,W,H);
+  dctx.lineWidth=1;dctx.strokeStyle="#fff";
+  for(const s of dotList){
+    const x=s.x*k+t.x,y=s.y*k+t.y;if(x<-r||y<-r||x>W+r||y>H+r)continue;
+    const rr=s.rec?r+1:r;dctx.fillStyle=dotCol[s.g.c];dctx.beginPath();dctx.arc(x,y,rr,0,6.2832);dctx.fill();dctx.stroke();
+    if(s.rec){dctx.fillStyle="#ffd43b";dctx.beginPath();const q=rr*.66;STAR_PTS.forEach(([a,b],i)=>i?dctx.lineTo(x+a*q,y+.04*r+b*q):dctx.moveTo(x+a*q,y+.04*r+b*q));dctx.closePath();dctx.fill();}
+  }
+  if(me&&me.x!=null){const x=me.x*k+t.x,y=me.y*k+t.y;dctx.fillStyle="#2f7bff";dctx.beginPath();dctx.arc(x,y,6,0,6.2832);dctx.fill();dctx.lineWidth=2;dctx.stroke();}
+}
+function dotsEnd(){
+  if(!dotsOn)return;dotsOn=false;if(dotsRaf){cancelAnimationFrame(dotsRaf);dotsRaf=0;}
+  svgEl.style.visibility="";
+  requestAnimationFrame(()=>{if(!dotsOn)dctx.clearRect(0,0,dotCvs.width,dotCvs.height);});
+}
 function sizeCanvas(){
   MX=Math.round(W*.25);MY=Math.round(H*.25);
   const cw=W+2*MX,ch=H+2*MY;
