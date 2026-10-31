@@ -503,6 +503,8 @@ const ROAD_K=22, MINOR_K=60;
 const PRE_K=16, MINOR_PRE_K=42;   // start loading a little before a layer becomes visible
 const ramp=(k,a,b)=>k<=a?0:k>=b?1:((k-a)/(b-a))*((k-a)/(b-a))*(3-2*(k-a)/(b-a));
 let ovTile=null, ovState=null, landP=null;
+const STA_K=42, STA_NAME_K=58, EXIT_K=260;
+let STA=null, staState=null;
 const roadState=new Map();   // tile key -> "loading" | "ok"
 const tiles=new Map();       // tile key -> {layer: [{p:Path2D|null, d:string, b:[x0,y0,x1,y1]}]}
 const ORDER=["park","water","river0","river1","r4","r3","r2","r1","r0"];
@@ -603,7 +605,7 @@ function drawRoads(){
       ctx.strokeStyle=C.major;ctx.lineWidth=ow(k<10?1:1.8);eachIn(ovTile,"r0",p=>ctx.stroke(p));}
     ctx.globalAlpha=1;
   }
-  if(!ROADIDX||aD<0.01||!tiles.size)return;
+  if(!ROADIDX||aD<0.01||!tiles.size){drawStations(k,t);return;}
   // ---- detail
   const z=Math.log2(k/ROAD_K);
   const w=(a,b)=>Math.max(a,Math.min(b,a+z*(b-a)/5))/k;
@@ -617,6 +619,65 @@ function drawRoads(){
   const a2=aD*ramp(k,26,40);if(a2>0.01){stroke("r2",C.edge,w(2.6,6.5),a2);stroke("r2",C.road,w(1.6,5),a2);}
   stroke("r1",C.medge,w(3.2,8.5),aD);stroke("r1",C.major,w(2,7),aD);
   stroke("r0",C.medge,w(4,10.5),aD);stroke("r0",C.major,w(2.6,9),aD);
+  ctx.globalAlpha=1;
+  drawStations(k,t);
+}
+function loadStations(){
+  if(staState)return;staState="loading";
+  fetch(new URL("roads/stations.json",location.href).href).then(r=>{if(!r.ok)throw 0;return r.json();}).then(d=>{
+    const L=d.L.map(([name,c,t])=>({name,c,t}));
+    STA=d.S.map(([name,lat,lng,li,ex])=>{const [x,y]=proj([lng,lat]);
+      return {name,x,y,L:li.map(i=>L[i]),ex:ex.map(([n,la,lo,i])=>{const [ex_,ey]=proj([lo,la]);return {n,x:ex_,y:ey,c:L[i].c};})};});
+    scheduleDraw();
+  }).catch(()=>{staState=null;});
+}
+function rrect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function drawStations(k,t){
+  if(!STA||k<STA_K)return;
+  ctx.setTransform(DPR,0,0,DPR,DPR*MX,DPR*MY);ctx.globalAlpha=Math.min(1,(k-STA_K)/(STA_K*0.4)+0.35);
+  const halo=css("--halo")||"#fff",ink=css("--ink")||"#222";
+  const X0=-MX,Y0=-MY,X1=W+MX,Y1=H+MY;
+  const vis=STA.filter(s=>{const px=s.x*k+t.x,py=s.y*k+t.y;return px>X0-60&&px<X1+60&&py>Y0-30&&py<Y1+30;});
+  const hit=(box,list)=>list.some(b=>!(box[2]<b[0]||box[0]>b[2]||box[3]<b[1]||box[1]>b[3]));
+  const big=k>=STA_NAME_K;
+  // 1) place station labels (line badges at the point + name on the right), skipping ones that collide
+  const placed=[],sBoxes=[];
+  for(const s of vis){
+    const px=s.x*k+t.x,py=s.y*k+t.y;
+    ctx.font="800 10px 'Noto Sans KR',system-ui,sans-serif";
+    const bw=s.L.map(l=>l.t.length===1?16:Math.max(16,ctx.measureText(l.t).width+10));
+    const tw=bw.reduce((a,b)=>a+b,0)+(s.L.length-1)*2;
+    ctx.font="700 12px 'Noto Sans KR',system-ui,sans-serif";
+    const nw=big?ctx.measureText(s.name).width+6:0;
+    const x0=px-tw/2,box=[x0-2,py-10,x0+tw+nw+4,py+10];
+    if(hit(box,sBoxes))continue;
+    sBoxes.push(box);placed.push({s,px,py,bw,x0});
+  }
+  // 2) exits (street level), under the station labels and not on top of each other
+  if(k>=EXIT_K){
+    ctx.font="700 10px 'Noto Sans KR',system-ui,sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+    const eBoxes=[];
+    for(const s of vis)for(const e of s.ex){
+      const px=e.x*k+t.x,py=e.y*k+t.y;if(px<X0||px>X1||py<Y0||py>Y1)continue;
+      const w=Math.max(15,ctx.measureText(e.n).width+7),hh=15,box=[px-w/2-1,py-hh/2-1,px+w/2+1,py+hh/2+1];
+      if(hit(box,eBoxes)||hit(box,sBoxes))continue;eBoxes.push(box);
+      ctx.fillStyle="#fff";rrect(px-w/2-1.5,py-hh/2-1.5,w+3,hh+3,4.5);ctx.fill();
+      ctx.fillStyle=e.c;rrect(px-w/2,py-hh/2,w,hh,3.5);ctx.fill();
+      ctx.fillStyle="#fff";ctx.fillText(e.n,px,py+0.5);
+    }
+  }
+  // 3) draw the station labels
+  ctx.textBaseline="middle";
+  for(const {s,py,bw,x0} of placed){
+    let x=x0;
+    s.L.forEach((l,i)=>{const w=bw[i];
+      ctx.fillStyle="#fff";rrect(x-1.5,py-9.5,w+3,19,9.5);ctx.fill();
+      ctx.fillStyle=l.c;rrect(x,py-8,w,16,8);ctx.fill();
+      ctx.font="800 10px 'Noto Sans KR',system-ui,sans-serif";ctx.textAlign="center";ctx.fillStyle="#fff";ctx.fillText(l.t,x+w/2,py+0.5);
+      x+=w+2;});
+    if(big){ctx.font="700 12px 'Noto Sans KR',system-ui,sans-serif";ctx.textAlign="left";
+      ctx.lineJoin="round";ctx.lineWidth=3.5;ctx.strokeStyle=halo;ctx.strokeText(s.name,x+3,py+0.5);ctx.fillStyle=ink;ctx.fillText(s.name,x+3,py+0.5);}
+  }
   ctx.globalAlpha=1;
 }
 // during a gesture: move the last drawing as a picture; redraw only if it has drifted too far
@@ -646,6 +707,7 @@ function loadOverview(){
 async function loadRoads(){
   drawRoads();
   loadOverview();
+  if(zoomK>=STA_K*0.6)loadStations();
   if(!ROADIDX||zoomK<PRE_K)return;
   const T=ROADIDX.T;
   const [ax,ay]=zt.invert([-MX,-MY]),[bx,by]=zt.invert([W+MX,H+MY]);
