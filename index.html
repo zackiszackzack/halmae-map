@@ -348,7 +348,7 @@ const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).o
 svg.call(zoom).on("dblclick.zoom",null);
 function styleZoom(){
   const k=zoomK;
-  mapEl.style.background=k>=22?"var(--land)":"var(--sea)";
+  mapEl.style.background="var(--sea)";
   gLand.selectAll(".prov").attr("fill-opacity",0).attr("stroke-opacity",k>=22?0:1);
   gLand.select(".muni").attr("stroke-opacity",k>250?0:1);
   gLand.selectAll(".prov").style("stroke-width",.8/k);
@@ -514,7 +514,8 @@ function focusShop(s,k){
 const ROAD_K=22, MINOR_K=60;
 const PRE_K=16, MINOR_PRE_K=42;   // start loading a little before a layer becomes visible
 const ramp=(k,a,b)=>k<=a?0:k>=b?1:((k-a)/(b-a))*((k-a)/(b-a))*(3-2*(k-a)/(b-a));
-let ovTile=null, ovState=null, landP=null;
+let ovTile=null, ovState=null, landP=null, LANDIDX=null;
+fetch(new URL("roads/land_index.json",location.href).href).then(r=>r.ok?r.json():null).then(d=>{if(d){LANDIDX=d;scheduleDraw();}}).catch(()=>{});
 const STA_K=42, STA_NAME_K=58, EXIT_K=260;
 let STA=null, staState=null;
 const roadState=new Map();   // tile key -> "loading" | "ok"
@@ -539,6 +540,7 @@ function tileEncode(d,kind,S,TR,TS){
     return Object.values(out);}
   const res={};
   const cell=kind==="O"?TS:TS/4;
+  if(kind==="L"){res.land=enc(decAll(d.p),true,TS);return res;}
   if(kind==="m"){res.r3=enc(decAll(d),false,TS/8);}
   else{const g={};const push=(k,c)=>{(g[k]=g[k]||[]).push(c);};
     d={a:decAll(d.a),w:decAll(d.w),r:decAll(d.r)};
@@ -591,7 +593,26 @@ function drawRoads(){
   const C={land:css("--land"),park:css("--park"),water:css("--water"),edge:css("--road-edge"),road:css("--road"),medge:css("--road-major-edge"),major:css("--road-major"),muted:css("--muted")};
   ctx.lineCap="round";ctx.lineJoin="round";
   // land (below k 22 the sea is the page background; above it the whole background is land)
-  if(k<ROAD_K&&BASE){if(!landP)landP=BASE.prov.features.map(f=>new Path2D(path(f)));ctx.fillStyle=C.land;for(const lp of landP)ctx.fill(lp);}
+  if(BASE){
+    if(!landP)landP=BASE.prov.features.map(f=>new Path2D(path(f)));
+    // detailed coastline tiles (0.25°) replace the coarse province shapes once they are loaded
+    const done=[];
+    if(LANDIDX&&ROADIDX&&k>=PRE_K){const T=ROADIDX.T;const p0=proj.invert([x0,y1]),p1=proj.invert([x1,y0]);
+      for(let ty=Math.floor(p0[1]/T);ty<=Math.floor(p1[1]/T);ty++)for(let tx=Math.floor(p0[0]/T);tx<=Math.floor(p1[0]/T);tx++){
+        const v=LANDIDX[ty+"_"+tx],tl=tiles.get("L_"+ty+"_"+tx);
+        if(v===2&&!tl)continue;
+        const [ax,ay]=proj([tx*T,(ty+1)*T]),[bx,by]=proj([(tx+1)*T,ty*T]);
+        done.push({r:[ax,ay,bx-ax,by-ay],v,tl});}}
+    ctx.fillStyle=C.land;
+    ctx.save();
+    if(done.length){ctx.beginPath();ctx.rect(x0,y0,x1-x0,y1-y0);for(const d of done)ctx.rect(...d.r);ctx.clip("evenodd");}
+    for(const lp of landP)ctx.fill(lp);
+    ctx.restore();
+    for(const d of done){
+      if(d.v===1){ctx.fillRect(d.r[0]-0.02/k,d.r[1]-0.02/k,d.r[2]+0.04/k,d.r[3]+0.04/k);}
+      else if(d.v===2&&d.tl.land){for(const o of d.tl.land){if(!o.p)o.p=new Path2D(o.d);ctx.fill(o.p,"evenodd");}}
+    }
+  }
   const inView=o=>{const b=o.b;return !(b[2]<x0||b[0]>x1||b[3]<y0||b[1]>y1);};
   const eachIn=(tl,layer,fn)=>{const L=tl&&tl[layer];if(!L)return;for(const o of L){if(!inView(o))continue;if(!o.p)o.p=new Path2D(o.d);fn(o.p);}};
   const each=(layer,fn)=>{for(const tl of tiles.values())eachIn(tl,layer,fn);};
@@ -728,6 +749,7 @@ async function loadRoads(){
   const p0=proj.invert([ax,by]),p1=proj.invert([bx,ay]); // [lon,lat] SW, NE (screen + margin)
   const hit=([ty,tx])=>{const la0=ty*T,lo0=tx*T;return la0<=p1[1]&&la0+T>=p0[1]&&lo0<=p1[0]&&lo0+T>=p0[0];};
   const jobs=ROADIDX.M.filter(hit).map(t=>["M",t]);
+  if(LANDIDX)for(const key in LANDIDX){if(LANDIDX[key]!==2)continue;const [ty,tx]=key.split("_").map(Number);if(hit([ty,tx]))jobs.push(["L",[ty,tx]]);}
   evictTiles((p0[0]+p1[0])/2,(p0[1]+p1[1])/2);
   if(zoomK>=MINOR_PRE_K)ROADIDX.m.filter(hit).forEach(t=>jobs.push(["m",t]));
   for(const [kind,[ty,tx]] of jobs){
