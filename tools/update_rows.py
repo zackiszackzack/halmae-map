@@ -57,7 +57,8 @@ def md_plain(t):
     t = str(t or "")
     t = re.sub(r"\[([^\]]*)\]\((https?://[^)\s]+)\)", lambda m: m.group(2) if m.group(1).strip() in ("", m.group(2)) else f"{m.group(1)} {m.group(2)}", t)
     t = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|~>])", r"\1", t)
-    return t.replace("**", "").strip()
+    t = re.sub(r"\s·\s+/\s", " · ", t.replace("**", ""))  # empty memo between a prefix and an appended note
+    return t.strip()
 
 
 def pid(u):
