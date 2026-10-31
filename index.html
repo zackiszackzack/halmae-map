@@ -336,7 +336,7 @@ function updateWhere(){
 }
 
 const ZMAX=6000;
-const PR=k=>Math.min(5.5*Math.pow(k,.08),7.5);
+const PR=k=>Math.min(3.9*Math.pow(k,.08),5.4);
 const zoom=d3.zoom().scaleExtent([0.8,ZMAX]).clickDistance(10).tapDistance(14).on("start",()=>{mapEl.classList.add("moving");})
   .on("zoom",ev=>{zt=ev.transform;zoomK=zt.k;gRoot.attr("transform",zt);overTransform();slideRoads();if(!rafPending){rafPending=true;requestAnimationFrame(()=>{rafPending=false;styleZoom();});}})
   .on("end",()=>{mapEl.classList.remove("moving");
@@ -355,7 +355,7 @@ function styleZoom(){
   gLand.select(".muni").style("stroke-width",.5/k);
   const B=OB;
   const pr=PR(k);
-  gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1.2/k*B);
+  gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1/k*B);
   gSel.selectAll("circle").attr("r",(pr+5)/k*B).style("stroke-width",2.5/k*B);
   gHit.selectAll("circle").attr("r",Math.max(pr+4,11)/k*B);
   styleMe();
