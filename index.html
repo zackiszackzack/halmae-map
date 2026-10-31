@@ -123,6 +123,9 @@ aside{width:340px;flex:none;border-left:1px solid var(--line);background:var(--p
 .links{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
 .links a,.links button{font:inherit;font-size:13px;font-weight:500;text-decoration:none;padding:8px 12px;border-radius:999px;border:1px solid var(--line);color:var(--ink);background:var(--panel);cursor:pointer}
 .links a.kakao{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:700}
+.links a.ig{border:1.5px solid transparent;background:linear-gradient(var(--panel),var(--panel)) padding-box,linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5) border-box}
+.links a.nb{border:1.5px solid #03c75a}
+.memo a.ref{color:#03a94f;font-weight:600;text-decoration:none;white-space:nowrap}
 .copy{font:inherit;font-size:12px;padding:1px 7px;margin-left:6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
 .drawer-toggle{display:none}
 .attrib{position:absolute;right:max(8px,env(safe-area-inset-right,0px));bottom:4px;font-size:10px;color:var(--muted);background:color-mix(in srgb,var(--panel) 75%,transparent);padding:1px 6px;border-radius:4px;pointer-events:none}
@@ -716,7 +719,28 @@ function renderList(){
 // card
 const card=document.getElementById("card");
 function esc(t){return String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-function linkify(t){return esc(t).replace(/https:\/\/www\.instagram\.com\/[^\s]+/g,u=>`<a href="${u}" target="_blank" rel="noopener">다른 릴스</a>`);}
+// evidence links in the memo (blog / cafe / other pages) become buttons; in the text they shrink to a short tag
+const REF_RE=/https?:\/\/[^\s"<>)]+/g;
+function refLinks(memo){
+  const out=[],seen=new Set();
+  for(const u of (memo||"").match(REF_RE)||[]){
+    if(/instagram\.com/.test(u))continue;
+    const key=u.replace(/^https?:\/\/(m\.)?/,"").replace(/[?#].*$/,"");if(seen.has(key))continue;seen.add(key);
+    const kind=/blog\.naver\.com/.test(u)?"블로그":/cafe\.naver\.com/.test(u)?"카페":"글";
+    out.push({u,kind});
+  }
+  const n={블로그:0,카페:0,글:0},tot={블로그:0,카페:0,글:0};out.forEach(r=>tot[r.kind]++);
+  out.forEach(r=>{n[r.kind]++;r.label=(r.kind==="글"?"근거 글":"네이버 "+r.kind)+(tot[r.kind]>1?" "+n[r.kind]:"");r.tag=r.kind+(tot[r.kind]>1?" "+n[r.kind]:"");});
+  return out;
+}
+function linkify(t){
+  const refs=refLinks(t);
+  return esc(t).replace(/https?:\/\/[^\s"<>)]+/g,u=>{
+    if(/instagram\.com/.test(u))return `<a href="${u}" target="_blank" rel="noopener">다른 릴스</a>`;
+    const r=refs.find(x=>esc(x.u)===u);
+    return `<a class="ref" href="${u}" target="_blank" rel="noopener">[${r?r.tag:"링크"}]</a>`;
+  });
+}
 function tapAt(d,ev){
   const mr=mapEl.getBoundingClientRect(),tx=ev.clientX-mr.left,ty=ev.clientY-mr.top,k=zoomK,rr=PR(k)+7;
   const near=visibleShops().filter(s=>s.x!=null&&Math.hypot(s.x*k+zt.x-tx,s.y*k+zt.y-ty)<=rr);
@@ -750,15 +774,13 @@ function select(s,fromMap){
       ${s.lat!=null?`<a class="kakao" href="https://map.kakao.com/link/to/${encodeURIComponent(s.name)},${s.lat},${s.lng}" target="_blank" rel="noopener">내 위치에서 길찾기</a>`:""}
       ${s.kakao?`<a href="${esc(s.kakao)}" target="_blank" rel="noopener">카카오맵</a>`:""}
       ${s.naver?`<a href="${esc(s.naver)}" target="_blank" rel="noopener">네이버지도</a>`:""}
-      ${s.reel?`<a href="${esc(s.reel)}" target="_blank" rel="noopener">인스타 릴스</a>`:""}
-      ${s.x!=null?`<button id="near">이 근처 가게</button>`:""}
+      ${s.reel?`<a class="ig" href="${esc(s.reel)}" target="_blank" rel="noopener">인스타 릴스</a>`:""}
+      ${refLinks(s.memo).slice(0,4).map(r=>`<a class="nb" href="${esc(r.u)}" target="_blank" rel="noopener">${esc(r.label)}</a>`).join("")}
     </div>`;
   card.hidden=false;
   card.querySelector(".x").onclick=()=>{state.sel=null;card.hidden=true;render();};
   const cp=card.querySelector("#cp");
   if(cp)cp.onclick=async()=>{try{await navigator.clipboard.writeText(s.phone);cp.textContent="복사됨";}catch(e){const r=document.createRange();r.selectNodeContents(card.querySelector("#ph"));const se=getSelection();se.removeAllRanges();se.addRange(r);cp.textContent="선택됨";}};
-  const nb=card.querySelector("#near");
-  if(nb)nb.onclick=()=>{focusShop(s,Math.max(zoomK,220));document.getElementById("aside").classList.add("open");};
   render();
   if(fromMap)nudgeZoom(s);
 }
