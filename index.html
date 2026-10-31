@@ -368,7 +368,7 @@ function styleZoom(){
   mapEl.style.background="var(--sea)";
   const B=OB;
   const pr=PR(k);
-  gPins.selectAll("circle").attr("r",d=>((d===pressed?pr+1.5:pr)+(d.rec?1:0))/k*B).attr("stroke-width",1/k*B);
+  gPins.selectAll("circle").attr("r",d=>((d===pressed?pr+1.5:pr)+(d.rec?2:0))/k*B).attr("stroke-width",1/k*B);
   gSel.selectAll("circle").attr("r",(pr+5)/k*B).style("stroke-width",2.5/k*B);
   gHit.selectAll("circle").attr("r",Math.max(pr+4,11)/k*B);
   styleMe();
@@ -602,7 +602,7 @@ function drawDots(){
   dctx.lineWidth=1;dctx.strokeStyle="#fff";
   for(const s of dotList){
     const x=s.x*k+t.x,y=s.y*k+t.y;if(x<-r||y<-r||x>W+r||y>H+r)continue;
-    const rr=s.rec?r+1:r;dctx.fillStyle=dotCol[s.g.c];dctx.beginPath();dctx.arc(x,y,rr,0,6.2832);dctx.fill();dctx.stroke();
+    const rr=s.rec?r+2:r;dctx.fillStyle=dotCol[s.g.c];dctx.beginPath();dctx.arc(x,y,rr,0,6.2832);dctx.fill();dctx.stroke();
     if(s.rec){dctx.fillStyle="#ffd43b";dctx.beginPath();const q=rr*.66;STAR_PTS.forEach(([a,b],i)=>i?dctx.lineTo(x+a*q,y+.04*r+b*q):dctx.moveTo(x+a*q,y+.04*r+b*q));dctx.closePath();dctx.fill();}
   }
   if(me&&me.x!=null){const x=me.x*k+t.x,y=me.y*k+t.y;dctx.fillStyle="#2f7bff";dctx.beginPath();dctx.arc(x,y,6,0,6.2832);dctx.fill();dctx.lineWidth=2;dctx.stroke();}
