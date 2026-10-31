@@ -285,10 +285,11 @@ function visibleShops(){
 // map
 const mapEl=document.getElementById("map");
 const svg=d3.select(mapEl).insert("svg",":first-child");
+svg.append("defs").html('<pattern id="recStar" patternContentUnits="objectBoundingBox" width="1" height="1"><rect width="1" height="1" fill="var(--s-todo)"/><path transform="translate(.5,.52) scale(.33)" fill="#ffd43b" stroke="#c98a00" stroke-width=".06" d="M0,-1L0.2245,-0.309L0.951,-0.309L0.3633,0.118L0.5878,0.809L0,0.382L-0.5878,0.809L-0.3633,0.118L-0.951,-0.309L-0.2245,-0.309Z"/></pattern>');
 const gRoot=svg.append("g"), gLand=gRoot.append("g");
 // pins and names live in their own layer whose units are re-based (×OB) after each zoom, so the shapes never get
 // microscopically small at street level (iPhone Safari drew tiny circles as white blobs)
-const gOver=svg.append("g"), gLbl=gOver.append("g"), gSel=gOver.append("g"), gPins=gOver.append("g"), gStar=gOver.append("g").attr("pointer-events","none"), gMe=gOver.append("g").attr("pointer-events","none"), gNames=gOver.append("g"), gHit=gOver.append("g");
+const gOver=svg.append("g"), gLbl=gOver.append("g"), gSel=gOver.append("g"), gPins=gOver.append("g"), gMe=gOver.append("g").attr("pointer-events","none"), gNames=gOver.append("g"), gHit=gOver.append("g");
 let me=null;
 let OB=1;
 function overTransform(){gOver.attr("transform",`translate(${zt.x},${zt.y}) scale(${zt.k/OB})`);}
@@ -349,7 +350,6 @@ function styleZoom(){
   const B=OB;
   const pr=PR(k);
   gPins.selectAll("circle").attr("r",d=>(d===pressed?pr+1.5:pr)/k*B).attr("stroke-width",1.2/k*B);
-  gStar.selectAll("path").attr("transform",d=>`translate(${d.x*B},${d.y*B}) scale(${(d===pressed?pr+1.5:pr)*0.72/k*B})`);
   gSel.selectAll("circle").attr("r",(pr+5)/k*B).style("stroke-width",2.5/k*B);
   gHit.selectAll("circle").attr("r",Math.max(pr+4,11)/k*B);
   styleMe();
@@ -744,10 +744,9 @@ function render(){
   sel.join(
     en=>en.append("circle").attr("class","pin").on("click",(ev,d)=>{ev.stopPropagation();select(d);}),
     up=>up, ex=>ex.remove())
-   .attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB).attr("fill",d=>`var(${d.g.c})`)
+   .attr("cx",d=>d.x*OB).attr("cy",d=>d.y*OB).attr("fill",d=>d.rec?"url(#recStar)":`var(${d.g.c})`)
    .classed("sel",d=>d===state.sel);
   gPins.selectAll("circle").sort((a,b)=>(a===state.sel)-(b===state.sel)||GROUPS.indexOf(b.g)-GROUPS.indexOf(a.g));
-  gStar.selectAll("path").data(vis.filter(d=>d.rec),d=>d.i).join(en=>en.append("path").attr("class","star").attr("d","M0,-1L0.2245,-0.309L0.951,-0.309L0.3633,0.118L0.5878,0.809L0,0.382L-0.5878,0.809L-0.3633,0.118L-0.951,-0.309L-0.2245,-0.309Z"));
   gHit.selectAll("circle").data(vis,d=>d.i).join(en=>en.append("circle").attr("class","hit")
       .on("pointerdown",(ev,d)=>{downAt={x:ev.clientX,y:ev.clientY,d};press(d);})
       .on("pointerup",(ev,d)=>{if(downAt&&downAt.d===d&&Math.hypot(ev.clientX-downAt.x,ev.clientY-downAt.y)<14){ev.stopPropagation();suppressBg=true;setTimeout(()=>suppressBg=false,400);tapAt(d,ev);}downAt=null;})
