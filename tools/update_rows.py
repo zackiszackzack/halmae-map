@@ -72,7 +72,8 @@ def from_notion(o):
     return [md_plain(o.get("상호")), o.get("섭외 상태") or "섭외 전", o.get("지역") or "", o.get("구") or "", o.get("동") or "",
             md_plain(o.get("주소")), o.get("전화번호") or "", md_plain(o.get("메모")), num(lat), num(lng),
             o.get("카카오맵") or "", o.get("네이버지도") or "", o.get("인스타 릴스") or "",
-            1 if o.get("우선 섭외") in ("__YES__", True) else 0, pid(o.get("url")), md_plain(o.get("영업시간"))]
+            1 if o.get("우선 섭외") in ("__YES__", True) else 0, pid(o.get("url"))] + \
+           ([md_plain(o.get("영업시간"))] if "영업시간" in o else [])  # 칸이 안 온 조회 결과면 지도의 기존 값을 유지
 
 
 def find(rows, r):
