@@ -90,8 +90,14 @@ def find(rows, r):
         if norm(o[0]) == norm(r[0]) and norm(o[5]) == norm(r[5]) and not (rid and len(o) > 14 and o[14] and o[14] != rid):
             return i
     # same name only counts when it is in the same area (another city with the same 상호 is a different shop)
+    # ...and only when the two points are close (same name in the same 구 can still be a different shop)
+    def near(o):
+        try:
+            return not (o[8] and r[8]) or ((float(o[8]) - float(r[8])) * 111000) ** 2 + ((float(o[9]) - float(r[9])) * 88000) ** 2 < 250 ** 2
+        except (TypeError, ValueError):
+            return True
     same = [i for i, o in enumerate(rows) if norm(o[0]) == norm(r[0]) and not (len(o) > 14 and o[14])
-            and o[2] == r[2] and (not o[3] or not r[3] or o[3] == r[3])]
+            and o[2] == r[2] and (not o[3] or not r[3] or o[3] == r[3]) and near(o)]
     return same[0] if len(same) == 1 and rid else None
 
 
