@@ -3,14 +3,14 @@
 
   python3 tools/kakao_hours.py 9469190 191148965          # 장소 id 몇 개 시험
   HALMAE_PW=.. python3 tools/kakao_hours.py --map out.json  # 지도에서 영업시간이 빈 가게(카카오 장소 링크 있는 것)만 조회
-      → out.json = [{"pid": 노션 페이지 id, "name", "kid", "hours", "tels"}] (노션 반영용), 지도에도 바로 반영(저장은 호출한 쪽이 커밋)
+      → out.json = [{"pid": 노션 페이지 id, "name", "kid", "hours", "tel"}] (노션 반영용), 지도에도 바로 반영(저장은 호출한 쪽이 커밋)
+      카카오맵에 영업시간이 없던 장소는 tools/kakao_checked.json 에 날짜를 적어 30일 동안 다시 묻지 않는다.
 
 장소 정보: https://place.map.kakao.com/places/panel3/{id} (헤더 pf: PC). 이 주소가 허용 목록에 있어야 한다.
 """
 import sys, os, re, json, time, urllib.request
 
-H = {"pf": "PC", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36",
-     "Referer": "https://place.map.kakao.com/"}
+H = {"pf": "PC", "User-Agent": "Mozilla/5.0"}
 ORDER = "월화수목금토일"
 
 
@@ -70,6 +70,13 @@ if __name__ == "__main__":
         import update_rows as U
         pw = os.environ["HALMAE_PW"]
         h, m, rows = U.load(pw)
+        import datetime
+        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date()
+        ck_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kakao_checked.json")
+        try:
+            checked = json.load(open(ck_path))
+        except Exception:
+            checked = {}
         out, n = [], 0
         for r in rows:
             while len(r) < 16:
@@ -77,11 +84,15 @@ if __name__ == "__main__":
             k = kid_of(r[10])
             if not k or r[15] or r[1] in ("촬영완료", "거절", "대상 아님", "폐업"):
                 continue
+            if k in checked and (today - datetime.date.fromisoformat(checked[k])).days < 30:
+                continue
             try:
                 res = fmt(fetch(k))
             except Exception as e:
                 print("fail", r[0], k, str(e)[:60], file=sys.stderr); time.sleep(1); continue
             time.sleep(0.4)
+            if not res["hours"]:
+                checked[k] = today.isoformat()
             if not res["hours"] and not (res["tels"] and not r[6]):
                 continue
             if res["hours"]:
@@ -91,6 +102,7 @@ if __name__ == "__main__":
             out.append({"pid": r[14], "name": r[0], "kid": k, "hours": res["hours"], "tel": r[6] if res["tels"] else ""})
             n += 1
         U.save(h, m, rows, pw)
+        json.dump(checked, open(ck_path, "w"), ensure_ascii=False, separators=(",", ":"))
         json.dump(out, open(a[1], "w", encoding="utf-8"), ensure_ascii=False)
         print("filled", n)
     else:
