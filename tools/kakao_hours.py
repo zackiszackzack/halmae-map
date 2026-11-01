@@ -3,7 +3,7 @@
 
   python3 tools/kakao_hours.py 9469190 191148965          # 장소 id 몇 개 시험
   HALMAE_PW=.. python3 tools/kakao_hours.py --map out.json  # 지도에서 영업시간이 빈 가게(카카오 장소 링크 있는 것)만 조회
-      → out.json = [{"pid": 노션 페이지 id, "name", "kid", "hours", "tel"}] (노션 반영용), 지도에도 바로 반영(저장은 호출한 쪽이 커밋)
+      → out.json = [{"pid": 노션 페이지 id, "name", "kid", "hours", "tel"(새로 채운 번호만)}] (노션 반영용), 지도에도 바로 반영(저장은 호출한 쪽이 커밋)
       카카오맵에 영업시간이 없던 장소는 tools/kakao_checked.json 에 날짜를 적어 30일 동안 다시 묻지 않는다.
 
 장소 정보: https://place.map.kakao.com/places/panel3/{id} (헤더 pf: PC). 이 주소가 허용 목록에 있어야 한다.
@@ -95,11 +95,12 @@ if __name__ == "__main__":
                 checked[k] = today.isoformat()
             if not res["hours"] and not (res["tels"] and not r[6]):
                 continue
+            new_tel = ""
             if res["hours"]:
                 r[15] = res["hours"]
             if not r[6] and res["tels"]:
-                r[6] = res["tels"][0]
-            out.append({"pid": r[14], "name": r[0], "kid": k, "hours": res["hours"], "tel": r[6] if res["tels"] else ""})
+                r[6] = new_tel = res["tels"][0]
+            out.append({"pid": r[14], "name": r[0], "kid": k, "hours": res["hours"], "tel": new_tel})  # tel: 새로 채운 번호만
             n += 1
         U.save(h, m, rows, pw)
         json.dump(checked, open(ck_path, "w"), ensure_ascii=False, separators=(",", ":"))
