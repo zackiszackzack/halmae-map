@@ -11,7 +11,7 @@
   HALMAE_PW=<비밀번호> python3 tools/update_rows.py --remove 상호 주소          # 한 곳 빼기
 
 patch.json = 행 배열. 행 형식:
-  [상호, 섭외상태, 지역, 구, 동, 주소, 전화, 메모, 위도, 경도, 카카오맵, 네이버지도, 인스타릴스, 우선섭외 0/1, (노션 페이지 id)]
+  [상호, 섭외상태, 지역, 구, 동, 주소, 전화, 메모, 위도, 경도, 카카오맵, 네이버지도, 인스타릴스, 우선섭외 0/1, (노션 페이지 id), (영업시간)]
 rows.json = 노션 query-data-sources(rows 모드) 결과의 "results" 배열들을 이어 붙인 JSON 배열(값은 받은 그대로).
 같은 노션 페이지 id → 같은 카카오 place 링크 → 같은 상호+주소 → (하나뿐인) 같은 상호 순으로 찾아 바꾸고, 없으면 추가한다.
 비밀번호는 저장소에 절대 쓰지 말 것(환경변수로만 받는다).
@@ -72,7 +72,7 @@ def from_notion(o):
     return [md_plain(o.get("상호")), o.get("섭외 상태") or "섭외 전", o.get("지역") or "", o.get("구") or "", o.get("동") or "",
             md_plain(o.get("주소")), o.get("전화번호") or "", md_plain(o.get("메모")), num(lat), num(lng),
             o.get("카카오맵") or "", o.get("네이버지도") or "", o.get("인스타 릴스") or "",
-            1 if o.get("우선 섭외") in ("__YES__", True) else 0, pid(o.get("url"))]
+            1 if o.get("우선 섭외") in ("__YES__", True) else 0, pid(o.get("url")), md_plain(o.get("영업시간"))]
 
 
 def find(rows, r):
@@ -131,10 +131,14 @@ def main():
         patch = json.load(open(a[0], encoding="utf-8"))
     added = changed = 0
     report = []
-    NAMES = ["상호", "섭외 상태", "지역", "구", "동", "주소", "전화", "메모", "위도", "경도", "카카오맵", "네이버지도", "인스타 릴스", "우선 섭외"]
+    NAMES = ["상호", "섭외 상태", "지역", "구", "동", "주소", "전화", "메모", "위도", "경도", "카카오맵", "네이버지도", "인스타 릴스", "우선 섭외", "노션 id", "영업시간"]
     for r in patch:
-        assert isinstance(r, list) and len(r) in (14, 15), r
+        assert isinstance(r, list) and len(r) in (14, 15, 16), r
         hit = find(rows, r)
+        if hit is not None:  # keep columns the patch doesn't carry (page id, 영업시간)
+            r = list(r)
+            while len(r) < len(rows[hit]):
+                r.append(rows[hit][len(r)])
         where = " ".join(x for x in (r[2], r[4] or r[3]) if x)
         pin = "지도에 점 표시" if r[8] is not None else "좌표 없음 — 검색으로만 보임"
         if hit is None:
@@ -143,7 +147,8 @@ def main():
         elif rows[hit] != r:
             o = rows[hit]
             diff = []
-            for k in range(14):
+            for k in range(min(len(o), len(r))):
+                if k == 14: continue
                 if o[k] != r[k]:
                     if k == 1: diff.append(f"섭외 상태 '{o[1]}' → '{r[1]}'")
                     elif k in (8, 9): diff.append("위치") if "위치" not in diff else None
