@@ -88,7 +88,9 @@ def find(rows, r):
     for i, o in enumerate(rows):
         if norm(o[0]) == norm(r[0]) and norm(o[5]) == norm(r[5]) and not (rid and len(o) > 14 and o[14] and o[14] != rid):
             return i
-    same = [i for i, o in enumerate(rows) if norm(o[0]) == norm(r[0]) and not (len(o) > 14 and o[14])]
+    # same name only counts when it is in the same area (another city with the same 상호 is a different shop)
+    same = [i for i, o in enumerate(rows) if norm(o[0]) == norm(r[0]) and not (len(o) > 14 and o[14])
+            and o[2] == r[2] and (not o[3] or not r[3] or o[3] == r[3])]
     return same[0] if len(same) == 1 and rid else None
 
 
